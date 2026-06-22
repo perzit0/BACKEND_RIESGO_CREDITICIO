@@ -1,6 +1,5 @@
 import os
 import joblib
-import numpy as np
 import warnings
 from datetime import datetime
 
@@ -26,12 +25,16 @@ def evaluar_fraude(
     telefono: str,
 ) -> bool:
     """
-    Evalua si un registro de usuario nuevo es sospechoso de fraude.
+    Evalúa si un registro de usuario nuevo es sospechoso de fraude.
     Devuelve True si es sospechoso, False si es normal.
 
     Columnas que usa el modelo (en este orden exacto):
     edad, antiguedad_laboral_meses, dni_valido,
     ip_registros_simultaneos, telefono_repetido, hora_registro
+
+    NOTA: edad y antiguedad_laboral_meses son opcionales en el registro.
+    Si no vienen del formulario, auth_routes.py usa valores neutrales (30, 12)
+    que no sesgan el modelo hacia ningún extremo.
     """
     modelo = _cargar_modelo()
 
@@ -56,9 +59,8 @@ def evaluar_fraude(
 
 def _contar_registros_ip(ip: str) -> int:
     """
-    Cuenta cuantos usuarios se registraron desde la misma IP
-    en los ultimos 10 minutos. Por ahora devuelve 1 (solo el actual).
-    Cuando se implemente en produccion, consultar la base de datos.
+    Cuenta cuántos usuarios se registraron desde la misma IP
+    en los últimos 10 minutos.
     """
     if not ip:
         return 1
@@ -77,7 +79,9 @@ def _contar_registros_ip(ip: str) -> int:
 
 def _telefono_ya_existe(telefono: str) -> int:
     """
-    Verifica si el telefono ya esta registrado en otra cuenta.
+    Verifica si el teléfono ya está registrado en otra cuenta.
+    Nota: teléfono no es unique en la DB por decisión de diseño,
+    pero sí se usa como señal de fraude si se repite.
     """
     if not telefono:
         return 0

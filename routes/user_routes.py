@@ -6,8 +6,7 @@ from services.risk_service import evaluar_riesgo
 from services.pdf_service import generar_pdf_evaluacion
 from services.middleware import requiere_token
 from services.auth_service import (
-    hashear_password, verificar_password,
-    generar_token_recuperacion, verificar_token_recuperacion, cambiar_password,
+    verificar_token_recuperacion, cambiar_password,
 )
 from services.verification_service import (
     generar_y_enviar_correo_cambio_perfil,
@@ -19,7 +18,7 @@ import secrets
 user_bp = Blueprint("user", __name__)
 
 
-# ── EVALUACION ──
+# ── EVALUACIÓN ──
 
 @user_bp.route("/evaluar-riesgo", methods=["POST"])
 @requiere_token
@@ -106,26 +105,29 @@ def descargar_pdf(evaluacion_id):
     if evaluacion is None:
         return jsonify({"error": "Evaluacion no encontrada"}), 404
 
-    usuario = Usuario.query.get(usuario_id)
+    # CORRECCIÓN: db.session.get reemplaza Usuario.query.get (deprecado en SQLAlchemy 2.x)
+    usuario = db.session.get(Usuario, usuario_id)
     pdf_bytes = generar_pdf_evaluacion(usuario, evaluacion)
 
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=reporte_riesgo_{evaluacion_id}.pdf"
+            "Content-Disposition": f"attachment; filename=reporte_riesgo_{evaluacion_id}.pdf",
+            # Header necesario para que el navegador permita la descarga desde web
+            "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
 
 
-# ── ESTADISTICAS COMUNIDAD ──
+# ── ESTADÍSTICAS COMUNIDAD ──
 
 @user_bp.route("/comunidad", methods=["GET"])
 @requiere_token
 def comunidad():
     from sqlalchemy import func
 
-    # Subconsulta: ultima evaluacion de cada usuario
+    # Subconsulta: última evaluación de cada usuario
     subq = (
         db.session.query(
             Evaluacion.usuario_id,
@@ -173,7 +175,7 @@ def comunidad():
 @requiere_token
 def mi_perfil():
     usuario_id = request.usuario_actual["usuario_id"]
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
     return jsonify({
         "id": usuario.id,
@@ -195,7 +197,7 @@ def actualizar_nombre():
     if not nuevo_nombre:
         return jsonify({"error": "El nombre no puede estar vacio"}), 400
 
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
     usuario.nombre = nuevo_nombre
     db.session.commit()
 
@@ -206,11 +208,11 @@ def actualizar_nombre():
 @requiere_token
 def solicitar_cambio_password():
     usuario_id = request.usuario_actual["usuario_id"]
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
+    from datetime import datetime, timedelta
     codigo = str(secrets.randbelow(900000) + 100000)
     usuario.token_recuperacion = codigo
-    from datetime import datetime, timedelta
     usuario.token_recuperacion_expira = datetime.utcnow() + timedelta(minutes=10)
     db.session.commit()
 
@@ -239,7 +241,7 @@ def confirmar_cambio_password():
     if len(nueva) < 8:
         return jsonify({"error": "La contrasena debe tener al menos 8 caracteres"}), 400
 
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
     if not verificar_token_recuperacion(usuario.email, codigo):
         return jsonify({"error": "Codigo invalido o expirado"}), 400
@@ -259,11 +261,11 @@ def solicitar_cambio_telefono():
     if not nuevo_telefono:
         return jsonify({"error": "El nuevo telefono es obligatorio"}), 400
 
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
+    from datetime import datetime, timedelta
     codigo = str(secrets.randbelow(900000) + 100000)
     usuario.token_recuperacion = codigo
-    from datetime import datetime, timedelta
     usuario.token_recuperacion_expira = datetime.utcnow() + timedelta(minutes=10)
     usuario.telefono_nuevo_pendiente = nuevo_telefono
     db.session.commit()
@@ -285,7 +287,7 @@ def confirmar_cambio_telefono():
     if not codigo_correo:
         return jsonify({"error": "El codigo de correo es obligatorio"}), 400
 
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
     if not verificar_token_recuperacion(usuario.email, codigo_correo):
         return jsonify({"error": "Codigo de correo invalido o expirado"}), 400
@@ -314,7 +316,7 @@ def verificar_nuevo_telefono():
     if not codigo_sms:
         return jsonify({"error": "El codigo SMS es obligatorio"}), 400
 
-    usuario = Usuario.query.get(usuario_id)
+    usuario = db.session.get(Usuario, usuario_id)
 
     if not usuario.telefono_nuevo_pendiente:
         return jsonify({"error": "No hay cambio de telefono pendiente"}), 400

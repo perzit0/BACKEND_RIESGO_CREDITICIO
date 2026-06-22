@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from flask import current_app
 from twilio.rest import Client
 
-_codigos_correo = {}
 DURACION_CODIGO_MINUTOS = 10
 
 
@@ -14,16 +13,55 @@ def _generar_codigo() -> str:
     return str(random.randint(100000, 999999))
 
 
+# ── CORRECCIÓN CRÍTICA: códigos ahora se guardan en DB, no en RAM ──
+# El dict _codigos_correo anterior se perdía en cada reinicio de Gunicorn
+# y en cada deploy de Render. Ahora se persiste en la tabla codigos_verificacion.
+
+def _guardar_codigo_db(usuario_id: int, codigo: str) -> None:
+    from extensions import db
+    from models.codigo_verificacion import CodigoVerificacion
+
+    # Eliminar códigos anteriores del mismo usuario
+    CodigoVerificacion.query.filter_by(usuario_id=usuario_id).delete()
+
+    nuevo = CodigoVerificacion(
+        usuario_id=usuario_id,
+        codigo=codigo,
+        expira=datetime.utcnow() + timedelta(minutes=DURACION_CODIGO_MINUTOS),
+    )
+    db.session.add(nuevo)
+    db.session.commit()
+
+
+def _verificar_codigo_db(usuario_id: int, codigo_ingresado: str) -> bool:
+    from extensions import db
+    from models.codigo_verificacion import CodigoVerificacion
+
+    registro = CodigoVerificacion.query.filter_by(
+        usuario_id=usuario_id
+    ).order_by(CodigoVerificacion.creado_en.desc()).first()
+
+    if registro is None:
+        return False
+    if not registro.esta_vigente():
+        db.session.delete(registro)
+        db.session.commit()
+        return False
+    if registro.codigo != str(codigo_ingresado):
+        return False
+
+    db.session.delete(registro)
+    db.session.commit()
+    return True
+
+
 def generar_y_enviar_codigo_correo(usuario_id: int, email: str) -> str:
     codigo = _generar_codigo()
-    _codigos_correo[usuario_id] = {
-        "codigo": codigo,
-        "expira": datetime.utcnow() + timedelta(minutes=DURACION_CODIGO_MINUTOS),
-    }
+    _guardar_codigo_db(usuario_id, codigo)
     try:
         _enviar_correo_smtp(
             destinatario=email,
-            asunto="Codigo de verificacion — UNFV Riesgo Crediticio",
+            asunto="Codigo de verificacion - UNFV Riesgo Crediticio",
             codigo=codigo,
             mensaje="Tu codigo de verificacion es:",
         )
@@ -34,11 +72,16 @@ def generar_y_enviar_codigo_correo(usuario_id: int, email: str) -> str:
     return codigo
 
 
+def verificar_codigo_correo(usuario_id: int, codigo_ingresado: str) -> bool:
+    # CORRECCIÓN: ahora consulta la DB en lugar del dict en RAM
+    return _verificar_codigo_db(usuario_id, codigo_ingresado)
+
+
 def generar_y_enviar_codigo_recuperacion(email: str, codigo: str) -> None:
     try:
         _enviar_correo_smtp(
             destinatario=email,
-            asunto="Recuperacion de contrasena — UNFV Riesgo Crediticio",
+            asunto="Recuperacion de contrasena - UNFV Riesgo Crediticio",
             codigo=codigo,
             mensaje="Usa este codigo para restablecer tu contrasena:",
         )
@@ -50,14 +93,15 @@ def generar_y_enviar_codigo_recuperacion(email: str, codigo: str) -> None:
 
 def generar_y_enviar_correo_cambio_perfil(email: str, codigo: str, tipo: str) -> None:
     """
-    Envia un codigo de verificacion para cambios de perfil.
+    Envía un código de verificación para cambios de perfil.
     tipo puede ser: 'contrasena' o 'telefono'
     """
     if tipo == "contrasena":
-        asunto = "Cambio de contrasena — UNFV Riesgo Crediticio"
+        # CORRECCIÓN: asuntos sin caracteres especiales que corrompían el encoding
+        asunto = "Cambio de contrasena - UNFV Riesgo Crediticio"
         mensaje = "Has solicitado cambiar tu contrasena. Usa este codigo para confirmar:"
     else:
-        asunto = "Cambio de telefono — UNFV Riesgo Crediticio"
+        asunto = "Cambio de telefono - UNFV Riesgo Crediticio"
         mensaje = "Has solicitado cambiar tu numero de telefono. Usa este codigo para confirmar:"
 
     try:
@@ -82,14 +126,12 @@ def _enviar_correo_smtp(destinatario: str, asunto: str, codigo: str, mensaje: st
     msg["From"] = f"UNFV Riesgo Crediticio <{remitente}>"
     msg["To"] = destinatario
 
-    cuerpo_texto = f"""
-{mensaje} {codigo}
-
-Este codigo expira en {DURACION_CODIGO_MINUTOS} minutos.
-Si no solicitaste este cambio, ignora este mensaje.
-
-— UNFV Riesgo Crediticio
-"""
+    cuerpo_texto = (
+        f"{mensaje} {codigo}\n\n"
+        f"Este codigo expira en {DURACION_CODIGO_MINUTOS} minutos.\n"
+        f"Si no solicitaste este cambio, ignora este mensaje.\n\n"
+        f"-- UNFV Riesgo Crediticio"
+    )
 
     cuerpo_html = f"""
 <html>
@@ -115,24 +157,12 @@ Si no solicitaste este cambio, ignora este mensaje.
 </html>
 """
 
-    msg.attach(MIMEText(cuerpo_texto, "plain"))
-    msg.attach(MIMEText(cuerpo_html, "html"))
+    msg.attach(MIMEText(cuerpo_texto, "plain", "utf-8"))
+    msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(remitente, password)
         server.sendmail(remitente, destinatario, msg.as_string())
-
-
-def verificar_codigo_correo(usuario_id: int, codigo_ingresado: str) -> bool:
-    registro = _codigos_correo.get(usuario_id)
-    if registro is None:
-        return False
-    if datetime.utcnow() > registro["expira"]:
-        return False
-    if registro["codigo"] != codigo_ingresado:
-        return False
-    del _codigos_correo[usuario_id]
-    return True
 
 
 # ── SMS via Twilio ──
