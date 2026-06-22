@@ -17,6 +17,7 @@ Flask-Cors==5.0.0
 Flask-SQLAlchemy==3.1.1
 frozenlist==1.8.0
 greenlet==3.5.1
+gunicorn==26.0.0
 idna==3.18
 itsdangerous==2.2.0
 Jinja2==3.1.6
@@ -25,6 +26,7 @@ MarkupSafe==3.0.3
 multidict==6.7.1
 numpy==2.2.6
 openpyxl==3.1.5
+packaging==26.2
 pandas==2.3.3
 pillow==12.2.0
 propcache==0.5.2
