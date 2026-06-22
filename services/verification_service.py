@@ -118,7 +118,8 @@ Si no solicitaste este cambio, ignora este mensaje.
     msg.attach(MIMEText(cuerpo_texto, "plain"))
     msg.attach(MIMEText(cuerpo_html, "html"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
         server.login(remitente, password)
         server.sendmail(remitente, destinatario, msg.as_string())
 
