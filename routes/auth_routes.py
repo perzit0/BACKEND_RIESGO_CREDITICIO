@@ -191,3 +191,29 @@ def nueva_password():
     cambiar_password(email, nueva)
 
     return jsonify({"mensaje": "Contrasena actualizada correctamente."}), 200
+
+
+@auth_bp.route("/reenviar-codigo-correo", methods=["POST"])
+def reenviar_codigo_correo():
+    data = request.get_json()
+    usuario_id = data.get("usuario_id")
+    if not usuario_id:
+        return jsonify({"error": "usuario_id es obligatorio"}), 400
+    usuario = Usuario.query.get(usuario_id)
+    if not usuario:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    generar_y_enviar_codigo_correo(usuario.id, usuario.email)
+    return jsonify({"mensaje": "Codigo reenviado"}), 200
+
+
+@auth_bp.route("/reenviar-codigo-sms", methods=["POST"])
+def reenviar_codigo_sms():
+    data = request.get_json()
+    usuario_id = data.get("usuario_id")
+    if not usuario_id:
+        return jsonify({"error": "usuario_id es obligatorio"}), 400
+    usuario = Usuario.query.get(usuario_id)
+    if not usuario:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
+    return jsonify({"mensaje": "SMS reenviado"}), 200

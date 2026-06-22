@@ -1,10 +1,12 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask
 from flask_cors import CORS
 from extensions import db
 from config import Config
 
-# Se importan los modelos aqui para que SQLAlchemy los registre antes
-# de que db.create_all() intente crear las tablas en la base de datos.
 from models.usuario import Usuario
 from models.evaluacion import Evaluacion
 
@@ -13,7 +15,7 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    CORS(app)  # permite que el frontend (app movil o web) consuma esta API
+    CORS(app)
     db.init_app(app)
 
     with app.app_context():

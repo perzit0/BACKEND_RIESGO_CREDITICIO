@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class Config:
@@ -12,11 +14,9 @@ class Config:
 
     ML_MODELS_PATH = os.path.join(os.path.dirname(__file__), "ml_models")
 
-    # ── Gmail SMTP ──
     SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
     SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 
-    # ── Twilio ──
     TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
     TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "")
