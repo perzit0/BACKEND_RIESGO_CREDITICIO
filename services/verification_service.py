@@ -1,7 +1,5 @@
 import random
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import os
 from datetime import datetime, timedelta
 from flask import current_app
 from twilio.rest import Client
@@ -14,92 +12,17 @@ def _generar_codigo() -> str:
     return str(random.randint(100000, 999999))
 
 
-def generar_y_enviar_codigo_correo(usuario_id: int, email: str) -> str:
-    codigo = _generar_codigo()
-    _codigos_correo[usuario_id] = {
-        "codigo": codigo,
-        "expira": datetime.utcnow() + timedelta(minutes=DURACION_CODIGO_MINUTOS),
-    }
-    try:
-        _enviar_correo_smtp(
-            destinatario=email,
-            asunto="Codigo de verificacion — UNFV Riesgo Crediticio",
-            codigo=codigo,
-            mensaje="Tu codigo de verificacion es:",
-        )
-        print(f"[CORREO] Codigo enviado a {email}")
-    except Exception as e:
-        print(f"[CORREO] Error al enviar correo a {email}: {e}")
-        print(f"[SIMULADO] Codigo para {email}: {codigo}")
-    return codigo
-
-
-def generar_y_enviar_codigo_recuperacion(email: str, codigo: str) -> None:
-    try:
-        _enviar_correo_smtp(
-            destinatario=email,
-            asunto="Recuperacion de contrasena — UNFV Riesgo Crediticio",
-            codigo=codigo,
-            mensaje="Usa este codigo para restablecer tu contrasena:",
-        )
-        print(f"[CORREO] Codigo de recuperacion enviado a {email}")
-    except Exception as e:
-        print(f"[CORREO] Error al enviar recuperacion a {email}: {e}")
-        print(f"[SIMULADO] Codigo recuperacion para {email}: {codigo}")
-
-
-def generar_y_enviar_correo_cambio_perfil(email: str, codigo: str, tipo: str) -> None:
-    """
-    Envia un codigo de verificacion para cambios de perfil.
-    tipo puede ser: 'contrasena' o 'telefono'
-    """
-    if tipo == "contrasena":
-        asunto = "Cambio de contrasena — UNFV Riesgo Crediticio"
-        mensaje = "Has solicitado cambiar tu contrasena. Usa este codigo para confirmar:"
-    else:
-        asunto = "Cambio de telefono — UNFV Riesgo Crediticio"
-        mensaje = "Has solicitado cambiar tu numero de telefono. Usa este codigo para confirmar:"
-
-    try:
-        _enviar_correo_smtp(
-            destinatario=email,
-            asunto=asunto,
-            codigo=codigo,
-            mensaje=mensaje,
-        )
-        print(f"[CORREO] Codigo de {tipo} enviado a {email}")
-    except Exception as e:
-        print(f"[CORREO] Error: {e}")
-        print(f"[SIMULADO] Codigo {tipo} para {email}: {codigo}")
-
-
-def _enviar_correo_smtp(destinatario: str, asunto: str, codigo: str, mensaje: str):
-    remitente = current_app.config["SMTP_EMAIL"]
-    password = current_app.config["SMTP_PASSWORD"]
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = asunto
-    msg["From"] = f"UNFV Riesgo Crediticio <{remitente}>"
-    msg["To"] = destinatario
-
-    cuerpo_texto = f"""
-{mensaje} {codigo}
-
-Este codigo expira en {DURACION_CODIGO_MINUTOS} minutos.
-Si no solicitaste este cambio, ignora este mensaje.
-
-— UNFV Riesgo Crediticio
-"""
+def _enviar_correo_sendgrid(destinatario: str, asunto: str, codigo: str, mensaje: str):
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail
 
     cuerpo_html = f"""
 <html>
 <body style="font-family: Arial, sans-serif; background-color: #F0EFFF; padding: 32px;">
   <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 16px; padding: 32px;">
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
-      <div style="background:#6B4EFF; border-radius:10px; padding:8px 14px;">
-        <span style="color:white; font-weight:700; font-size:14px;">UNFV</span>
-      </div>
-      <span style="font-size:15px; font-weight:600; color:#1A1A2E;">Riesgo Crediticio</span>
+    <div style="margin-bottom:24px;">
+      <span style="background:#6B4EFF; border-radius:10px; padding:8px 14px; color:white; font-weight:700; font-size:14px;">UNFV</span>
+      <span style="font-size:15px; font-weight:600; color:#1A1A2E; margin-left:10px;">Riesgo Crediticio</span>
     </div>
     <p style="color:#4A5568; font-size:14px; margin-bottom:8px;">{mensaje}</p>
     <div style="background:#F0EFFF; border-radius:12px; padding:24px; text-align:center; margin:20px 0;">
@@ -115,13 +38,71 @@ Si no solicitaste este cambio, ignora este mensaje.
 </html>
 """
 
-    msg.attach(MIMEText(cuerpo_texto, "plain"))
-    msg.attach(MIMEText(cuerpo_html, "html"))
+    api_key = os.environ.get("SENDGRID_API_KEY", "")
+    remitente = current_app.config["SMTP_EMAIL"]
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(remitente, password)
-        server.sendmail(remitente, destinatario, msg.as_string())
+    message = Mail(
+        from_email=remitente,
+        to_emails=destinatario,
+        subject=asunto,
+        html_content=cuerpo_html
+    )
+
+    sg = SendGridAPIClient(api_key)
+    response = sg.send(message)
+    print(f"[SENDGRID] Correo enviado a {destinatario} — status: {response.status_code}")
+
+
+def generar_y_enviar_codigo_correo(usuario_id: int, email: str) -> str:
+    codigo = _generar_codigo()
+    _codigos_correo[usuario_id] = {
+        "codigo": codigo,
+        "expira": datetime.utcnow() + timedelta(minutes=DURACION_CODIGO_MINUTOS),
+    }
+    try:
+        _enviar_correo_sendgrid(
+            destinatario=email,
+            asunto="Codigo de verificacion — UNFV Riesgo Crediticio",
+            codigo=codigo,
+            mensaje="Tu codigo de verificacion es:",
+        )
+    except Exception as e:
+        print(f"[SENDGRID] Error al enviar correo a {email}: {e}")
+        print(f"[SIMULADO] Codigo para {email}: {codigo}")
+    return codigo
+
+
+def generar_y_enviar_codigo_recuperacion(email: str, codigo: str) -> None:
+    try:
+        _enviar_correo_sendgrid(
+            destinatario=email,
+            asunto="Recuperacion de contrasena — UNFV Riesgo Crediticio",
+            codigo=codigo,
+            mensaje="Usa este codigo para restablecer tu contrasena:",
+        )
+    except Exception as e:
+        print(f"[SENDGRID] Error al enviar recuperacion a {email}: {e}")
+        print(f"[SIMULADO] Codigo recuperacion para {email}: {codigo}")
+
+
+def generar_y_enviar_correo_cambio_perfil(email: str, codigo: str, tipo: str) -> None:
+    if tipo == "contrasena":
+        asunto = "Cambio de contrasena — UNFV Riesgo Crediticio"
+        mensaje = "Has solicitado cambiar tu contrasena. Usa este codigo para confirmar:"
+    else:
+        asunto = "Cambio de telefono — UNFV Riesgo Crediticio"
+        mensaje = "Has solicitado cambiar tu numero de telefono. Usa este codigo para confirmar:"
+
+    try:
+        _enviar_correo_sendgrid(
+            destinatario=email,
+            asunto=asunto,
+            codigo=codigo,
+            mensaje=mensaje,
+        )
+    except Exception as e:
+        print(f"[SENDGRID] Error: {e}")
+        print(f"[SIMULADO] Codigo {tipo} para {email}: {codigo}")
 
 
 def verificar_codigo_correo(usuario_id: int, codigo_ingresado: str) -> bool:
