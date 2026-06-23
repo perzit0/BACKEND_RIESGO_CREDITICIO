@@ -1,3 +1,4 @@
+import threading
 from flask import Blueprint, request, jsonify
 from extensions import db
 from models.usuario import Usuario
@@ -26,7 +27,6 @@ def registro():
     if faltantes:
         return jsonify({"error": f"Faltan campos: {', '.join(faltantes)}"}), 400
 
-    # Validar formato DNI antes de crear usuario
     dni = data["dni"].strip()
     if len(dni) != 8 or not dni.isdigit():
         return jsonify({"error": "El DNI debe tener exactamente 8 dígitos numéricos"}), 400
@@ -44,17 +44,14 @@ def registro():
         return jsonify({"error": str(e)}), 409
 
     ip_registro = request.headers.get("X-Forwarded-For", request.remote_addr)
-    # X-Forwarded-For puede traer múltiples IPs separadas por coma; tomar la primera
     if ip_registro and "," in ip_registro:
         ip_registro = ip_registro.split(",")[0].strip()
     usuario.ip_registro = ip_registro
     db.session.commit()
 
-    # Evaluar fraude (no bloquea el registro si falla)
+    # Evaluar fraude sin bloquear
     try:
         es_sospechoso = evaluar_fraude(
-            # CORRECCIÓN: edad y antiguedad usan valores del formulario si vienen,
-            # o valores neutrales que no sesguen el modelo
             edad=data.get("edad", 30),
             antiguedad_laboral_meses=data.get("antiguedad_laboral_meses", 12),
             dni=dni,
@@ -65,19 +62,20 @@ def registro():
             usuario.marcado_fraude = True
             db.session.commit()
     except Exception as e:
-        print(f"[FRAUDE] Error al evaluar fraude: {e}")
+        print(f"[FRAUDE] Error: {e}")
 
-    # CORRECCIÓN CRÍTICA: si el envío de correo falla, hacer rollback del usuario
-    # para que no quede huérfano en la DB y el usuario pueda reintentar el registro
-    try:
-        generar_y_enviar_codigo_correo(usuario.id, usuario.email)
-    except Exception as e:
-        print(f"[REGISTRO] Error al enviar correo a {usuario.email}: {e}")
-        db.session.delete(usuario)
-        db.session.commit()
-        return jsonify({
-            "error": "No se pudo enviar el correo de verificación. Intenta nuevamente en unos minutos."
-        }), 503
+    # CORRECCIÓN: enviar correo en background para no bloquear la respuesta
+    # Render free tier tiene timeout de 30s — el envío de correo lo superaba
+    usuario_id = usuario.id
+    email = usuario.email
+
+    def _enviar_en_background():
+        try:
+            generar_y_enviar_codigo_correo(usuario_id, email)
+        except Exception as e:
+            print(f"[CORREO-BG] Error: {e}")
+
+    threading.Thread(target=_enviar_en_background, daemon=True).start()
 
     return jsonify({
         "mensaje": "Usuario registrado. Verifica tu correo para continuar.",
@@ -125,7 +123,6 @@ def verificar_correo():
     if not verificar_codigo_correo(usuario_id, codigo):
         return jsonify({"error": "Codigo invalido o expirado"}), 400
 
-    # CORRECCIÓN: db.session.get() reemplaza el deprecado Usuario.query.get()
     usuario = db.session.get(Usuario, usuario_id)
     if usuario is None:
         return jsonify({"error": "Usuario no encontrado"}), 404
@@ -133,7 +130,14 @@ def verificar_correo():
     usuario.correo_verificado = True
     db.session.commit()
 
-    generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
+    # Enviar SMS en background también
+    def _enviar_sms_background():
+        try:
+            generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
+        except Exception as e:
+            print(f"[SMS-BG] Error: {e}")
+
+    threading.Thread(target=_enviar_sms_background, daemon=True).start()
 
     return jsonify({"mensaje": "Correo verificado. Se envio un codigo SMS."}), 200
 
@@ -170,12 +174,14 @@ def olvide_password():
 
     codigo = generar_token_recuperacion(email)
 
-    # Siempre respondemos igual, no revelamos si el correo existe
     if codigo:
-        try:
-            generar_y_enviar_codigo_recuperacion(email, codigo)
-        except Exception as e:
-            print(f"[CORREO] Error enviando recuperacion: {e}")
+        def _enviar_recuperacion_background():
+            try:
+                generar_y_enviar_codigo_recuperacion(email, codigo)
+            except Exception as e:
+                print(f"[RECUPERACION-BG] Error: {e}")
+
+        threading.Thread(target=_enviar_recuperacion_background, daemon=True).start()
 
     return jsonify({
         "mensaje": "Si ese correo esta registrado, recibiras un codigo para restablecer tu contrasena."
@@ -229,7 +235,14 @@ def reenviar_codigo_correo():
     if not usuario:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
-    generar_y_enviar_codigo_correo(usuario.id, usuario.email)
+    def _reenviar_background():
+        try:
+            generar_y_enviar_codigo_correo(usuario.id, usuario.email)
+        except Exception as e:
+            print(f"[REENVIO-BG] Error: {e}")
+
+    threading.Thread(target=_reenviar_background, daemon=True).start()
+
     return jsonify({"mensaje": "Codigo reenviado"}), 200
 
 
@@ -244,5 +257,12 @@ def reenviar_codigo_sms():
     if not usuario:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
-    generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
+    def _reenviar_sms_background():
+        try:
+            generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
+        except Exception as e:
+            print(f"[REENVIO-SMS-BG] Error: {e}")
+
+    threading.Thread(target=_reenviar_sms_background, daemon=True).start()
+
     return jsonify({"mensaje": "SMS reenviado"}), 200
