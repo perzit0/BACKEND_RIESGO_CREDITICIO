@@ -1,6 +1,5 @@
 import os
 import joblib
-import numpy as np
 import warnings
 from flask import current_app
 
@@ -18,43 +17,32 @@ def _cargar_modelo():
 
 
 def evaluar_riesgo(datos_formulario: dict) -> dict:
-    """
-    Recibe el diccionario con los campos del formulario y devuelve
-    el score, categoria, factores y recomendaciones.
-
-    Columnas que usa el modelo (en este orden exacto):
-    person_age, person_income, person_home_ownership,
-    person_emp_length, cb_person_default_on_file,
-    loan_percent_income, cb_person_cred_hist_length
-    """
     modelo = _cargar_modelo()
 
-    # Mapeo de campos del formulario a columnas del modelo
+    # Columnas numéricas
     person_age = datos_formulario.get("edad", 0)
     person_income = datos_formulario.get("ingreso_mensual", 0)
-    person_home_ownership = _mapear_vivienda(datos_formulario.get("tipo_vivienda", "propia"))
     person_emp_length = datos_formulario.get("antiguedad_laboral_meses", 0) / 12
-    cb_person_default_on_file = 1 if datos_formulario.get("dias_mora_historico", 0) > 0 else 0
     loan_percent_income = datos_formulario.get("ratio_deuda_ingreso", 0)
     cb_person_cred_hist_length = datos_formulario.get("num_lineas_credito_abiertas", 0)
 
-    entrada = np.array([[
-        person_age,
-        person_income,
-        person_home_ownership,
-        person_emp_length,
-        cb_person_default_on_file,
-        loan_percent_income,
-        cb_person_cred_hist_length,
-    ]])
+    # Columnas categóricas — el modelo usa OneHotEncoder con strings exactos
+    person_home_ownership = _mapear_vivienda(datos_formulario.get("tipo_vivienda", "propia"))
+
+    # CORRECCIÓN: cb_person_default_on_file debe ser 'Y' o 'N', no 0/1
+    mora = datos_formulario.get("dias_mora_historico", 0)
+    cb_person_default_on_file = "Y" if mora > 0 else "N"
 
     import pandas as pd
-    columnas = [
-        "person_age", "person_income", "person_home_ownership",
-        "person_emp_length", "cb_person_default_on_file",
-        "loan_percent_income", "cb_person_cred_hist_length",
-    ]
-    df_entrada = pd.DataFrame(entrada, columns=columnas)
+    df_entrada = pd.DataFrame([{
+        "person_age": person_age,
+        "person_income": person_income,
+        "person_emp_length": person_emp_length,
+        "loan_percent_income": loan_percent_income,
+        "cb_person_cred_hist_length": cb_person_cred_hist_length,
+        "person_home_ownership": person_home_ownership,
+        "cb_person_default_on_file": cb_person_default_on_file,
+    }])
 
     score_final = round(float(modelo.predict_proba(df_entrada)[0][1]), 3)
     categoria_riesgo = _categorizar(score_final)
@@ -73,6 +61,7 @@ def _mapear_vivienda(tipo: str) -> str:
     mapeo = {
         "propia": "OWN",
         "alquilada": "RENT",
+        "hipotecada": "MORTGAGE",
         "familiar": "OTHER",
     }
     return mapeo.get(tipo, "OTHER")
@@ -101,9 +90,9 @@ def _factores(datos: dict, score: float) -> list:
 
     antiguedad = datos.get("antiguedad_laboral_meses", 0)
     if antiguedad >= 24:
-        factores.append({"factor": "Buena antiguedad laboral", "impacto": "positivo"})
+        factores.append({"factor": "Buena antigüedad laboral", "impacto": "positivo"})
     else:
-        factores.append({"factor": "Poca antiguedad laboral", "impacto": "negativo"})
+        factores.append({"factor": "Poca antigüedad laboral", "impacto": "negativo"})
 
     ingreso = datos.get("ingreso_mensual", 0)
     if ingreso >= 3000:
@@ -118,15 +107,15 @@ def _recomendaciones(categoria: str, datos: dict) -> list:
     recs = []
 
     if categoria == "alto":
-        recs.append("Reduce tu nivel de endeudamiento antes de solicitar un nuevo credito.")
-        recs.append("Mantente al dia con tus pagos durante los proximos 6 meses.")
+        recs.append("Reduce tu nivel de endeudamiento antes de solicitar un nuevo crédito.")
+        recs.append("Mantente al día con tus pagos durante los próximos 6 meses.")
         recs.append("Considera aumentar tus ingresos o reducir gastos fijos.")
     elif categoria == "medio":
-        recs.append("Tu perfil es aceptable, pero reducir tus deudas mejoraria tu score.")
-        recs.append("Mantener un historial de pagos limpio mejorara tu perfil con el tiempo.")
+        recs.append("Tu perfil es aceptable, pero reducir tus deudas mejoraría tu score.")
+        recs.append("Mantener un historial de pagos limpio mejorará tu perfil con el tiempo.")
     else:
-        recs.append("Tu perfil de riesgo es bajo, sigue manteniendo tus habitos financieros.")
-        recs.append("Diversificar tus productos financieros puede fortalecer aun mas tu perfil.")
+        recs.append("Tu perfil de riesgo es bajo, sigue manteniendo tus hábitos financieros.")
+        recs.append("Diversificar tus productos financieros puede fortalecer aún más tu perfil.")
 
     if datos.get("dias_mora_historico", 0) > 0:
         recs.append("Regulariza tus deudas pendientes lo antes posible.")

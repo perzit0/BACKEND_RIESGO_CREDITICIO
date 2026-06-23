@@ -20,13 +20,14 @@ class Usuario(db.Model):
 
     marcado_fraude = db.Column(db.Boolean, default=False)
     revisado_por_admin = db.Column(db.Boolean, default=False)
+
+    # NUEVO: cuenta bloqueada por el admin (fraude confirmado)
+    bloqueado = db.Column(db.Boolean, default=False)
+
     ip_registro = db.Column(db.String(45))
 
-    # Recuperacion de contrasena
     token_recuperacion = db.Column(db.String(100), nullable=True)
     token_recuperacion_expira = db.Column(db.DateTime, nullable=True)
-
-    # Cambio de telefono pendiente de verificacion
     telefono_nuevo_pendiente = db.Column(db.String(15), nullable=True)
 
     fecha_registro = db.Column(db.DateTime, default=datetime.utcnow)
