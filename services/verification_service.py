@@ -133,6 +133,20 @@ def _enviar_correo_smtp(destinatario: str, asunto: str, codigo: str, mensaje: st
         f"-- UNFV Riesgo Crediticio"
     )
 
+    msg.attach(MIMEText(cuerpo_texto, "plain", "utf-8"))
+
+    # CORRECCIÓN: usar puerto 587 con STARTTLS en lugar de 465 SSL
+    # Render free tier bloquea el puerto 465 pero permite 587
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(remitente, password)
+            server.sendmail(remitente, destinatario, msg.as_string())
+    except Exception as e:
+        print(f"[SMTP] Error al enviar correo: {e}")
+        raise
+
     cuerpo_html = f"""
 <html>
 <body style="font-family: Arial, sans-serif; background-color: #F0EFFF; padding: 32px;">
