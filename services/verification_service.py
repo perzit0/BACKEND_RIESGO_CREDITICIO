@@ -13,15 +13,10 @@ def _generar_codigo() -> str:
     return str(random.randint(100000, 999999))
 
 
-# ── CORRECCIÓN CRÍTICA: códigos ahora se guardan en DB, no en RAM ──
-# El dict _codigos_correo anterior se perdía en cada reinicio de Gunicorn
-# y en cada deploy de Render. Ahora se persiste en la tabla codigos_verificacion.
-
 def _guardar_codigo_db(usuario_id: int, codigo: str) -> None:
     from extensions import db
     from models.codigo_verificacion import CodigoVerificacion
 
-    # Eliminar códigos anteriores del mismo usuario
     CodigoVerificacion.query.filter_by(usuario_id=usuario_id).delete()
 
     nuevo = CodigoVerificacion(
@@ -73,7 +68,6 @@ def generar_y_enviar_codigo_correo(usuario_id: int, email: str) -> str:
 
 
 def verificar_codigo_correo(usuario_id: int, codigo_ingresado: str) -> bool:
-    # CORRECCIÓN: ahora consulta la DB en lugar del dict en RAM
     return _verificar_codigo_db(usuario_id, codigo_ingresado)
 
 
@@ -92,12 +86,7 @@ def generar_y_enviar_codigo_recuperacion(email: str, codigo: str) -> None:
 
 
 def generar_y_enviar_correo_cambio_perfil(email: str, codigo: str, tipo: str) -> None:
-    """
-    Envía un código de verificación para cambios de perfil.
-    tipo puede ser: 'contrasena' o 'telefono'
-    """
     if tipo == "contrasena":
-        # CORRECCIÓN: asuntos sin caracteres especiales que corrompían el encoding
         asunto = "Cambio de contrasena - UNFV Riesgo Crediticio"
         mensaje = "Has solicitado cambiar tu contrasena. Usa este codigo para confirmar:"
     else:
@@ -118,9 +107,20 @@ def generar_y_enviar_correo_cambio_perfil(email: str, codigo: str, tipo: str) ->
 
 
 def _enviar_correo_smtp(destinatario: str, asunto: str, codigo: str, mensaje: str):
-    import os
-    from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
+    remitente = current_app.config["SMTP_EMAIL"]
+    password = current_app.config["SMTP_PASSWORD"]
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = asunto
+    msg["From"] = f"UNFV Riesgo Crediticio <{remitente}>"
+    msg["To"] = destinatario
+
+    cuerpo_texto = (
+        f"{mensaje} {codigo}\n\n"
+        f"Este codigo expira en {DURACION_CODIGO_MINUTOS} minutos.\n"
+        f"Si no solicitaste este cambio, ignora este mensaje.\n\n"
+        f"-- UNFV Riesgo Crediticio"
+    )
 
     cuerpo_html = f"""
 <html>
@@ -144,48 +144,12 @@ def _enviar_correo_smtp(destinatario: str, asunto: str, codigo: str, mensaje: st
 </html>
 """
 
-    api_key = os.environ.get("SENDGRID_API_KEY", "")
-    remitente = current_app.config["SMTP_EMAIL"]
-
-    message = Mail(
-        from_email=remitente,
-        to_emails=destinatario,
-        subject=asunto,
-        html_content=cuerpo_html
-    )
-
-    sg = SendGridAPIClient(api_key)
-    response = sg.send(message)
-    print(f"[SENDGRID] Correo enviado a {destinatario} — status: {response.status_code}")
-
-    cuerpo_html = f"""
-<html>
-<body style="font-family: Arial, sans-serif; background-color: #F0EFFF; padding: 32px;">
-  <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 16px; padding: 32px;">
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
-      <div style="background:#6B4EFF; border-radius:10px; padding:8px 14px;">
-        <span style="color:white; font-weight:700; font-size:14px;">UNFV</span>
-      </div>
-      <span style="font-size:15px; font-weight:600; color:#1A1A2E;">Riesgo Crediticio</span>
-    </div>
-    <p style="color:#4A5568; font-size:14px; margin-bottom:8px;">{mensaje}</p>
-    <div style="background:#F0EFFF; border-radius:12px; padding:24px; text-align:center; margin:20px 0;">
-      <span style="font-size:40px; font-weight:700; color:#6B4EFF; letter-spacing:14px;">{codigo}</span>
-    </div>
-    <p style="color:#8892B0; font-size:12px;">Este codigo expira en {DURACION_CODIGO_MINUTOS} minutos.</p>
-    <p style="color:#8892B0; font-size:12px;">Si no solicitaste este cambio, ignora este mensaje.</p>
-    <div style="margin-top:24px; padding-top:16px; border-top:1px solid #E2E8F0;">
-      <p style="color:#A0AEC0; font-size:11px;">Universidad Nacional Federico Villarreal</p>
-    </div>
-  </div>
-</body>
-</html>
-"""
-
     msg.attach(MIMEText(cuerpo_texto, "plain", "utf-8"))
     msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.ehlo()
+        server.starttls()
         server.login(remitente, password)
         server.sendmail(remitente, destinatario, msg.as_string())
 
