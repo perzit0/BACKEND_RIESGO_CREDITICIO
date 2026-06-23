@@ -1,5 +1,5 @@
 import threading
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from extensions import db
 from models.usuario import Usuario
 from services.auth_service import (
@@ -49,7 +49,6 @@ def registro():
     usuario.ip_registro = ip_registro
     db.session.commit()
 
-    # Evaluar fraude sin bloquear
     try:
         es_sospechoso = evaluar_fraude(
             edad=data.get("edad", 30),
@@ -64,22 +63,22 @@ def registro():
     except Exception as e:
         print(f"[FRAUDE] Error: {e}")
 
-    # CORRECCIÓN: enviar correo en background para no bloquear la respuesta
-    # Render free tier tiene timeout de 30s — el envío de correo lo superaba
     usuario_id = usuario.id
     email = usuario.email
+    app = current_app._get_current_object()
 
     def _enviar_en_background():
-        try:
-            generar_y_enviar_codigo_correo(usuario_id, email)
-        except Exception as e:
-            print(f"[CORREO-BG] Error: {e}")
+        with app.app_context():
+            try:
+                generar_y_enviar_codigo_correo(usuario_id, email)
+            except Exception as e:
+                print(f"[CORREO-BG] Error: {e}")
 
     threading.Thread(target=_enviar_en_background, daemon=True).start()
 
     return jsonify({
         "mensaje": "Usuario registrado. Verifica tu correo para continuar.",
-        "usuario_id": usuario.id,
+        "usuario_id": usuario_id,
     }), 201
 
 
@@ -130,12 +129,15 @@ def verificar_correo():
     usuario.correo_verificado = True
     db.session.commit()
 
-    # Enviar SMS en background también
+    app = current_app._get_current_object()
+    telefono = usuario.telefono
+
     def _enviar_sms_background():
-        try:
-            generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
-        except Exception as e:
-            print(f"[SMS-BG] Error: {e}")
+        with app.app_context():
+            try:
+                generar_y_enviar_codigo_sms(usuario_id, telefono)
+            except Exception as e:
+                print(f"[SMS-BG] Error: {e}")
 
     threading.Thread(target=_enviar_sms_background, daemon=True).start()
 
@@ -173,13 +175,15 @@ def olvide_password():
         return jsonify({"error": "El correo es obligatorio"}), 400
 
     codigo = generar_token_recuperacion(email)
+    app = current_app._get_current_object()
 
     if codigo:
         def _enviar_recuperacion_background():
-            try:
-                generar_y_enviar_codigo_recuperacion(email, codigo)
-            except Exception as e:
-                print(f"[RECUPERACION-BG] Error: {e}")
+            with app.app_context():
+                try:
+                    generar_y_enviar_codigo_recuperacion(email, codigo)
+                except Exception as e:
+                    print(f"[RECUPERACION-BG] Error: {e}")
 
         threading.Thread(target=_enviar_recuperacion_background, daemon=True).start()
 
@@ -235,11 +239,15 @@ def reenviar_codigo_correo():
     if not usuario:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
+    app = current_app._get_current_object()
+    email = usuario.email
+
     def _reenviar_background():
-        try:
-            generar_y_enviar_codigo_correo(usuario.id, usuario.email)
-        except Exception as e:
-            print(f"[REENVIO-BG] Error: {e}")
+        with app.app_context():
+            try:
+                generar_y_enviar_codigo_correo(usuario_id, email)
+            except Exception as e:
+                print(f"[REENVIO-BG] Error: {e}")
 
     threading.Thread(target=_reenviar_background, daemon=True).start()
 
@@ -257,11 +265,15 @@ def reenviar_codigo_sms():
     if not usuario:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
+    app = current_app._get_current_object()
+    telefono = usuario.telefono
+
     def _reenviar_sms_background():
-        try:
-            generar_y_enviar_codigo_sms(usuario.id, usuario.telefono)
-        except Exception as e:
-            print(f"[REENVIO-SMS-BG] Error: {e}")
+        with app.app_context():
+            try:
+                generar_y_enviar_codigo_sms(usuario_id, telefono)
+            except Exception as e:
+                print(f"[REENVIO-SMS-BG] Error: {e}")
 
     threading.Thread(target=_reenviar_sms_background, daemon=True).start()
 
